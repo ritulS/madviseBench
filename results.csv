@@ -1,0 +1,29 @@
+
+---- EXP DETAILS ----
+file = test.dat, size_ratio = 0.75,pattern = rand, madv_flag = seq, seed = 1, temperature_mode=cold,repeat =5
+
+Size ratio: 0.75, Avail Dram: 1073741824, target_size: 805306368, file_size: 2147483648
+
+--- Memory Pressure ---
+ Effective RAM limit: 1073741824 bytes (1 GiB)
+ size_ratio: 0.75
+ target_len__size: 805306368 bytes (768 MiB)
+ file_size: 2147483648 bytes (2048 MiB)
+ final map_len: 805306368 bytes (768 MiB)
+
+test.dat,0.750000,rand,-1,seq,cold,0,0.269830,2846.238218,9795,16205,196608,4096,805306368,2147483648,1073741824,1
+test.dat,0.750000,rand,-1,seq,cold,1,0.030565,25126.949989,12289,0,196608,4096,805306368,2147483648,1073741824,1
+test.dat,0.750000,rand,-1,seq,cold,2,0.030288,25356.180044,12289,0,196608,4096,805306368,2147483648,1073741824,1
+test.dat,0.750000,rand,-1,seq,cold,3,0.030089,25523.926787,12289,0,196608,4096,805306368,2147483648,1073741824,1
+test.dat,0.750000,rand,-1,seq,cold,4,0.030383,25277.190893,12289,0,196608,4096,805306368,2147483648,1073741824,1
+---- Summary ----
+  Pattern      : rand
+  Madvise      : seq
+  Repeat       : 5
+  Time (s)     : p10=0.030169, p50=0.030383, p90=0.174124
+  Throughput   : p10=11758.522926 MiB/s, p50=25277.190893 MiB/s, p90=25456.828090 MiB/s
+  Minflt (p50) : 12289
+  Majflt (p50) : 0
+
+minflts: 9795.000000 12289.000000 12289.000000 12289.000000 12289.000000 
+majflts: 16205.000000 0.000000 0.000000 0.000000 0.000000 
