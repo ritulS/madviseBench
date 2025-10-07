@@ -131,6 +131,9 @@ int main(int argc, char** argv) {
     std::string temp_mode = get_flag_value(argc, argv, "--temp", "none"); // hot/cold/none
     std::string csv = get_flag_value(argc, argv, "--csv", ""); // empty = no CSV
 
+    bool csv_mode = !csv.empty();
+    std::ostream& log = csv_mode ? std::cerr : std::cout;
+
     if (size_ratio.empty()) {
         std::cerr << "ERROR: missing --size-ratio <float> (e.g., 0.75, 1.0, 1.5)\n";
         return 2;
@@ -144,15 +147,16 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    std::cout << "\n---- EXP DETAILS ----" << "\n";
-    std::cout << "file = " << file << ", ";
-    // std::cout << "size_b = " << size_b << ",";
-    std::cout << "size_ratio = " << size_ratio << ",";
-    std::cout << "pattern = " << pattern << ", ";
-    std::cout << "madv_flag = " << madv_flag << ", ";
-    std::cout << "seed = " << seed << ", ";
-    std::cout << "temperature_mode=" << temp_mode << ",";
-    std::cout << "repeat =" << repeat << "\n\n";
+    
+    log << "\n---- EXP DETAILS ----" << "\n";
+    log << "file = " << file << ", ";
+    // log << "size_b = " << size_b << ",";
+    log << "size_ratio = " << size_ratio << ",";
+    log << "pattern = " << pattern << ", ";
+    log << "madv_flag = " << madv_flag << ", ";
+    log << "seed = " << seed << ", ";
+    log << "temperature_mode=" << temp_mode << ",";
+    log << "repeat =" << repeat << "\n\n";
 
     int fd = open(file.c_str(), O_RDONLY | O_NOATIME);
     if (fd < 0){
@@ -206,7 +210,7 @@ int main(int argc, char** argv) {
 
     unsigned long long target_len = static_cast<unsigned long long>(r * static_cast<double>(avail_dram));
     map_len = static_cast<size_t>(std::min<unsigned long long>(target_len, file_size));
-    std::cout << "Size ratio: " << size_ratio << ", " << "Avail Dram: "
+    log << "Size ratio: " << size_ratio << ", " << "Avail Dram: "
                 << avail_dram << ", " << "target_size: " << target_len << ", "
                 << "file_size: " << file_size <<"\n\n";
     
@@ -221,7 +225,7 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    std::cout << "--- Memory Pressure ---\n"
+    log << "--- Memory Pressure ---\n"
               << " Effective RAM limit: " << avail_dram
               << " bytes (" << (avail_dram / (1024.0 * 1024.0 * 1024.0)) << " GiB)\n"
               << " size_ratio: " << r << "\n"
@@ -284,6 +288,12 @@ int main(int argc, char** argv) {
     bool cold = (temp_mode == "cold");
     bool hot = (temp_mode == "hot");
 
+    if (!csv.empty()) {
+        std::cout <<
+        "file,size_ratio,pattern,stride_pages,madv,temp,repeat_idx,time_s,"
+        "throughput_mibps,minflt,majflt,npages,pagesz,map_len,file_size,"
+        "avail_ram,seed\n";
+    }
     // RUN LOOP
     for (int run = 0; run < repeat_count; run++) {
 
@@ -369,7 +379,7 @@ int main(int argc, char** argv) {
         long mn_p50 = std::lround(median(minflts));
         long mj_p50 = std::lround(median(majflts));
 
-        std::cout << "---- Summary ----\n"
+        log << "---- Summary ----\n"
               << "  Pattern      : " << pattern << "\n"
               << "  Madvise      : " << madv_flag << "\n"
               << "  Repeat       : " << repeat << "\n"
@@ -383,17 +393,17 @@ int main(int argc, char** argv) {
               << "  Majflt (p50) : " << mj_p50 << "\n"
               << std::endl;
 
-        std::cout << "minflts: ";
+        log << "minflts: ";
         for (const auto& val : minflts) {
-            std::cout << val << " ";
+            log << val << " ";
         }
-        std::cout << std::endl;
+        log << std::endl;
 
-        std::cout << "majflts: ";
+        log << "majflts: ";
         for (const auto& val : majflts) {
-            std::cout << val << " ";
+            log << val << " ";
         }
-        std::cout << std::endl;
+        log << std::endl;
     }
 
     munmap(base, map_len);
