@@ -18,8 +18,8 @@
 #include <sys/resource.h>
 
 ///////////
-// sudo systemd-run --scope -p MemoryMax=1G bash
-// g++ -O2 -std=c++17 -Wall -Wextra -o madvbench madvbench.cpp
+// sudo systemd-run --scope -p MemoryMax=3G bash
+// g++ -O2 -std=c++17 -Wall -Wextra -o madvbench main.cpp
 // fallocate -l 2G test.dat
 
 // ./madvbench --file test.dat --size-ratio 0.75 --pattern rand --madv rand --repeat 3 --temp cold
@@ -304,12 +304,11 @@ int main(int argc, char** argv) {
                 std::cerr << "posix_fadvise(DONTNEED) failed: " << strerror(pf) << "\n";
             }
             // Drop PTEs by unmapping, then remap and re-apply advice
-            if (run > 0){
-                munmap(base, map_len);
-                base = map_and_advise(fd, map_len, madv_flag);
-                if (base == nullptr) {perror("mmap"); close(fd); return 1;}
-                p = static_cast<volatile uint8_t*>(base);
-            }
+            munmap(base, map_len);
+            base = map_and_advise(fd, map_len, madv_flag);
+            if (base == nullptr) {perror("mmap"); close(fd); return 1;}
+            p = static_cast<volatile uint8_t*>(base);
+
         } else if (hot && run == 0) {
             // first run only; keep mapping & cache warm for all subsequent
             int pf2 = posix_fadvise(fd, 0, map_len, POSIX_FADV_WILLNEED);
@@ -328,6 +327,8 @@ int main(int argc, char** argv) {
             size_t off = idx * pagesz;
             if (off >= map_len) continue;
             sink ^= p[off];
+            // for (size_t i = 0; i < pagesz; i++)  // touch the whole page
+            //     sink ^= p[off + i];
         }
         auto t1 = std::chrono::steady_clock::now();
         (void)sink;
@@ -343,31 +344,34 @@ int main(int argc, char** argv) {
         double mib = ((double)npages/1024) * ((double)pagesz/1024);
         double mibps = mib / sec;
         
-        times.push_back(sec);
-        thrpts.push_back(mibps);
-        minflts.push_back(minflt_delta);
-        majflts.push_back(majflt_delta);
-        if (!csv.empty()) {
-            std::cout.setf(std::ios::fixed); 
-            std::cout << std::setprecision(6)
-                    << file << ","
-                    << r << ","
-                    << pattern << ","
-                    << stride_val << ","
-                    << madv_flag << ","
-                    << temp_mode << ","
-                    << run << ","
-                    << sec << ","
-                    << mibps << ","
-                    << minflt_delta << ","
-                    << majflt_delta << ","
-                    << npages << ","
-                    << pagesz << ","
-                    << map_len << ","
-                    << file_size << ","
-                    << avail_dram << ","
-                    << std::stoull(seed)
-                    << "\n";
+        bool should_record = !(hot && run == 0); // skip first run if hot
+        if (should_record) {
+            times.push_back(sec);
+            thrpts.push_back(mibps);
+            minflts.push_back(minflt_delta);
+            majflts.push_back(majflt_delta);
+            if (!csv.empty()) {
+                std::cout.setf(std::ios::fixed); 
+                std::cout << std::setprecision(6)
+                        << file << ","
+                        << r << ","
+                        << pattern << ","
+                        << stride_val << ","
+                        << madv_flag << ","
+                        << temp_mode << ","
+                        << run << ","
+                        << sec << ","
+                        << mibps << ","
+                        << minflt_delta << ","
+                        << majflt_delta << ","
+                        << npages << ","
+                        << pagesz << ","
+                        << map_len << ","
+                        << file_size << ","
+                        << avail_dram << ","
+                        << std::stoull(seed)
+                        << "\n";
+            }
         }
     }
 

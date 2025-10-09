@@ -36,21 +36,31 @@ stats = (
       .reset_index()
 )
 
-# ---------- (1) LATENCY p50/p99 grouped by MADV ----------
-lat = (
-    df.groupby(["pattern","temp","size_ratio","stride_pages","madv"])
-      .agg(p50_time=("time_s","median"),
-           p99_time=("time_s", p99))
-      .reset_index()
-)
-lat1 = lat[lat["size_ratio"] == 1.0].copy()
+# ---------- (1) LATENCY p50/p99 with per-run rows + whiskers ----------
+import numpy as np
 
+# Keys that define one experiment combo
+keys = ["pattern","temp","size_ratio","stride_pages","madv"]
+
+# (A) Compute group stats on raw runs
+grp_stats = (
+    df.groupby(keys, as_index=False)
+      .agg(p50_time=("time_s", "median"),
+           p99_time=("time_s", lambda s: np.percentile(s, 99)))
+)
+
+# (B) Merge stats back onto every raw run row -> "lat" now has ALL runs + p50/p99 per combo
+lat = df.merge(grp_stats, on=keys, how="left")
+
+# (C) Restrict to size_ratio=1.0 (no hot/cold averaging later)
+lat1 = lat[lat["size_ratio"] == 1.0].copy()
+# print(lat1)
+
+# ---- label helpers + consistent ordering ----
 def short_pattern(p):
     if isinstance(p, str) and p.startswith("stride:"):
         return f"s{p.split(':',1)[1]}"   # stride:2 -> s2
     return str(p)
-
-lat1["pattern"] = lat1["pattern"].apply(short_pattern)
 
 def pat_key(x: str):
     x = str(x)
@@ -60,113 +70,186 @@ def pat_key(x: str):
         return (2, int(x[1:]))   # s1, s2, s4, ...
     return (3, 0)
 
+lat1["pattern"] = lat1["pattern"].apply(short_pattern)
 pattern_order = sorted(lat1["pattern"].unique(), key=pat_key)
+print(pattern_order)
 lat1["pattern"] = pd.Categorical(lat1["pattern"], categories=pattern_order, ordered=True)
 
-fig, axes = plt.subplots(1, 2, figsize=(12,5), sharey=False)
+madv_order = ["none","rand","seq"]
+lat1["madv"] = pd.Categorical(lat1["madv"],
+                              categories=[m for m in madv_order if m in lat1["madv"].unique()],
+                              ordered=True)
 
-sns.barplot(data=lat1, x="pattern", y="p50_time", hue="madv",
-            ax=axes[0], capsize=0.2, order=pattern_order)
-axes[0].set_title("Latency p50 by MADV (size_ratio=1.0)")
-axes[0].set_xlabel("Access Pattern")
-axes[0].set_ylabel("Time (s)")
-axes[0].legend_.remove()
+# ---- estimators for bars ----
+def pct99(a):
+    # a is a 1D array of run times for a (pattern,temp,size_ratio,stride_pages,madv) group
+    return np.percentile(a, 99)
 
-sns.barplot(data=lat1, x="pattern", y="p99_time", hue="madv",
-            ax=axes[1], capsize=0.2, order=pattern_order)
-axes[1].set_title("Latency p99 by MADV (size_ratio=1.0)")
-axes[1].set_xlabel("Access Pattern")
-axes[1].set_ylabel("Time (s)")
-axes[1].set_yscale("log")
-axes[1].legend(title="MADV", loc="upper left")
+# ---- plotting: split hot/cold to avoid averaging them together ----
+def plot_by_temp(temp_label: str, outname: str):
+    d = lat1[lat1["temp"] == temp_label].copy()
+    if d.empty:
+        print(f"[warn] no data for temp={temp_label}")
+        return
 
-plt.tight_layout()
-plt.savefig(OUT_DIR / "fig1_latency_p50_p99_grouped.png", dpi=200)
-plt.close()
+    fig, axes = plt.subplots(1, 2, figsize=(12,5), sharey=False)
 
-# ---------- (2) THROUGHPUT + MINOR FAULTS (cold & hot, grouped by MADV, s-labels) ----------
+    # p50: bar = median across runs; whiskers = 90% percentile interval across runs
+    sns.barplot(
+        data=d, x="pattern", y="time_s", hue="madv",
+        order=pattern_order, estimator=np.median,
+        errorbar=("pi", 90), capsize=0.2, ax=axes[0]
+    )
+    axes[0].set_title(f"Latency p50 by MADV (size_ratio=1.0, temp={temp_label})")
+    axes[0].set_xlabel("Access Pattern")
+    axes[0].set_ylabel("Time (s)")
+    axes[0].legend_.remove()
 
-# ---------- (2a) THROUGHPUT: size_ratio in {1.0, 1.5} × {cold, hot} ----------
+    # p99: bar = 99th percentile across runs; whiskers = 90% percentile interval of that estimator via bootstrap
+    sns.barplot(
+        data=d, x="pattern", y="time_s", hue="madv",
+        order=pattern_order, estimator=pct99,
+        errorbar=("pi", 90), capsize=0.2, ax=axes[1]
+    )
+    axes[1].set_title(f"Latency p99 by MADV (size_ratio=1.0, temp={temp_label})")
+    axes[1].set_xlabel("Access Pattern")
+    axes[1].set_ylabel("Time (s)")
+    axes[1].set_yscale("log")
+    axes[1].legend(title="MADV", loc="upper left")
+
+    plt.tight_layout()
+    plt.savefig(OUT_DIR / outname, dpi=200)
+    plt.close()
+
+# Render separate figures (no hot/cold mixing)
+plot_by_temp("cold", "fig_latency_p50_p99_cold.png")
+plot_by_temp("hot",  "fig_latency_p50_p99_hot.png")
+
+
+
+
+
+# ---------- [2] THROUGHPUT + MINOR FAULTS (cold & hot, grouped by MADV, s-labels) ----------
+
+#### ---------- (2a) THROUGHPUT: size_ratio in {1.0, 1.5} × {cold, hot} ----------
 sizes = [1.0, 1.5]
 temps = ["cold", "hot"]
 
-subset = stats[stats["size_ratio"].isin(sizes)].copy()
+runs = df[df["size_ratio"].isin(sizes)].copy()
 
-# shorten stride labels
-def short_pattern(p):
-    if isinstance(p, str) and p.startswith("stride:"):
-        return f"s{p.split(':',1)[1]}"
-    return str(p)
+runs["pattern"] = runs["pattern"].apply(short_pattern)
 
-subset["pattern"] = subset["pattern"].apply(short_pattern)
+pattern_order = sorted(runs["pattern"].unique(), key=pat_key)
+runs["pattern"] = pd.Categorical(runs["pattern"], categories=pattern_order, ordered=True)
 
-# robust ordering: rand, seq, then s1, s2, s4, ...
-def pat_key(x: str):
-    x = str(x)
-    if x == "rand": return (0, 0)
-    if x == "seq":  return (1, 0)
-    if x.startswith("s") and x[1:].isdigit():
-        return (2, int(x[1:]))
-    return (3, 0)
-
-pattern_order = sorted(subset["pattern"].unique(), key=pat_key)
-subset["pattern"] = pd.Categorical(subset["pattern"], categories=pattern_order, ordered=True)
+# keep a stable MADV order but only include those present
+madv_order = ["none", "rand", "seq", "willneed", "dontneed", "free"]
+runs["madv"] = pd.Categorical(
+    runs["madv"],
+    categories=[m for m in madv_order if m in runs["madv"].unique()],
+    ordered=True
+)
 
 fig, axes = plt.subplots(len(temps), len(sizes), figsize=(12, 8), sharex=True, sharey=True)
-if len(temps) == 1: axes = [axes]  # normalize shape for 1 row
+if len(temps) == 1: axes = [axes]  # normalize for single row
 
 for i, temp in enumerate(temps):
     for j, sr in enumerate(sizes):
-        data_ij = subset[(subset["temp"] == temp) & (subset["size_ratio"] == sr)]
+        d = runs[(runs["temp"] == temp) & (runs["size_ratio"] == sr)]
         ax = axes[i][j]
-        sns.barplot(data=data_ij, x="pattern", y="p50_thr", hue="madv",
-                    ax=ax, capsize=0.2, order=pattern_order)
+
+        # Bars: median throughput across runs; Whiskers: 90% percentile interval via bootstrap
+        sns.barplot(
+            data=d, x="pattern", y="throughput_mibps", hue="madv",
+            order=pattern_order, estimator=np.median, errorbar=("pi", 90), capsize=0.2, ax=ax
+        )
+
+        # OPTIONAL: show all per-run points on top (so you literally see "all throughput")
+        # comment out if you don't want the dots
+        sns.stripplot(
+            data=d, x="pattern", y="throughput_mibps", hue="madv",
+            order=pattern_order, dodge=True, alpha=0.35, size=3, ax=ax, legend=False
+        )
+
         ax.set_title(f"Throughput (MiB/s) — {temp}, size_ratio={sr}")
         ax.set_xlabel("Access Pattern")
         ax.set_ylabel("Throughput (MiB/s)")
         ax.grid(axis="y", linestyle="--", alpha=0.4)
+
+        # keep only one legend (top-right panel)
         if not (i == 0 and j == len(sizes)-1):
-            # only keep one legend (top-right panel)
             leg = ax.get_legend()
             if leg: leg.remove()
 
-# single legend on top-right subplot
+# single legend on the top-right subplot
 axes[0][len(sizes)-1].legend(title="MADV", loc="upper right")
 
 plt.tight_layout()
 plt.savefig(OUT_DIR / "fig2a_throughput_sr1.0_1.5.png", dpi=200)
 plt.close()
 
+
 # ---------- (2b) MINOR FAULTS: size_ratio in {1.0, 1.5} × {cold, hot} ----------
+# ---------- (2b) MINOR FAULTS (use RAW runs, not pre-aggregated) ----------
+import numpy as np
+
 sizes = [1.0, 1.5]
 temps = ["cold", "hot"]
 
-subset_f = stats[stats["size_ratio"].isin(sizes)].copy()
-subset_f["pattern"] = subset_f["pattern"].apply(short_pattern)
-subset_f["pattern"] = pd.Categorical(subset_f["pattern"], categories=pattern_order, ordered=True)
+runs_f = df[df["size_ratio"].isin(sizes)].copy()
+
+runs_f["pattern"] = runs_f["pattern"].apply(short_pattern)
+
+pattern_order = sorted(runs_f["pattern"].unique(), key=pat_key)
+runs_f["pattern"] = pd.Categorical(runs_f["pattern"], categories=pattern_order, ordered=True)
+
+# MADV order
+madv_order = ["none", "rand", "seq", "willneed", "dontneed", "free"]
+runs_f["madv"] = pd.Categorical(
+    runs_f["madv"],
+    categories=[m for m in madv_order if m in runs_f["madv"].unique()],
+    ordered=True
+)
 
 fig, axes = plt.subplots(len(temps), len(sizes), figsize=(12, 8), sharex=True, sharey=True)
-if len(temps) == 1: axes = [axes]
+if len(temps) == 1:
+    axes = [axes]
 
 for i, temp in enumerate(temps):
     for j, sr in enumerate(sizes):
-        data_ij = subset_f[(subset_f["temp"] == temp) & (subset_f["size_ratio"] == sr)]
+        d = runs_f[(runs_f["temp"] == temp) & (runs_f["size_ratio"] == sr)]
         ax = axes[i][j]
-        sns.barplot(data=data_ij, x="pattern", y="p50_minflt", hue="madv",
-                    ax=ax, capsize=0.2, order=pattern_order)
+
+        # Bars: median minor faults across runs; Whiskers: 90% percentile interval via bootstrap
+        sns.barplot(
+            data=d, x="pattern", y="minflt", hue="madv",
+            order=pattern_order, estimator=np.median,
+            errorbar=("pi", 90), capsize=0.2, ax=ax
+        )
+
+        # Optional: overlay per-run points for visibility
+        sns.stripplot(
+            data=d, x="pattern", y="minflt", hue="madv",
+            order=pattern_order, dodge=True, alpha=0.35, size=3, ax=ax, legend=False
+        )
+
         ax.set_title(f"Minor Faults (p50) — {temp}, size_ratio={sr}")
         ax.set_xlabel("Access Pattern")
         ax.set_ylabel("Fault Count")
         ax.grid(axis="y", linestyle="--", alpha=0.4)
+
+        # keep only one legend (top-right subplot)
         if not (i == 0 and j == len(sizes)-1):
             leg = ax.get_legend()
             if leg: leg.remove()
 
+# single legend on the top-right subplot
 axes[0][len(sizes)-1].legend(title="MADV", loc="upper right")
 
 plt.tight_layout()
 plt.savefig(OUT_DIR / "fig2b_minfaults_sr1.0_1.5.png", dpi=200)
 plt.close()
+
 
 # ---------- (3) COLD vs HOT DELTA ----------
 cold = stats[stats.temp=="cold"].rename(columns={"p50_thr":"thr_cold","p50_minflt":"minflt_cold"})

@@ -21,8 +21,8 @@ PATTERNS_CORE = ["seq", "rand", "stride:4"]                    # figs 1–3
 TEMPS_CORE = ["cold", "hot"]
 MADVS = ["none", "seq", "rand"]
 
-SIZE_RATIOS = [0.50, 0.75, 1.00, 1.25, 1.50]                   # fig 4 (seq,cold)
-STRIDES = [1, 2, 4, 8, 16, 32, 64, 128]                        # fig 5 (cold, sr=1.0)
+SIZE_RATIOS = [0.50, 1.00, 1.50]                   # fig 4 (seq,cold)
+STRIDES = [1, 2, 16, 64]                        # fig 5 (cold, sr=1.0)
 
 CORE_CSV = "core.csv"          # figs 1–3
 SIZE_CSV = "size_sweep.csv"    # fig 4
